@@ -1,36 +1,44 @@
 # geekmagic-stats
 
-Push live Claude Code usage stats and macOS disk space to a [GeekMagic SmallTV](https://geekmagic.cc) display over your local network.
+Push live developer stats — Claude Code usage, GitHub PRs, CI runners, system vitals, and per-model token usage — to a [GeekMagic SmallTV](https://geekmagic.cc) display over your local network.
 
-![Stats and disk screens side by side](docs/screenshots/hero.png)
+![All screens](docs/screenshots/hero.png)
 
-The device auto-cycles between screens every 10 seconds in album mode.
+One command renders every enabled screen and pushes them to the device as an auto-cycling album. The rotator only pushes when the device is reachable, so leaving it running is a no-op when you're away.
 
 ## Screens
 
-### Claude Code Usage
+| | |
+|---|---|
+| ![Claude Code](docs/screenshots/stats.png) | **Claude Code** — Session (5h) and Weekly (7d) usage windows with pace markers, plus your **Fable** weekly-limit and token volume (see below). |
+| ![Pull Requests](docs/screenshots/pr.png) | **Pull Requests** — open PRs you authored and PRs awaiting your review, each with a live CI status dot (green pass / red fail / gray no-checks). |
+| ![System Vitals](docs/screenshots/vitals.png) | **System Vitals** — CPU load, memory pressure, and battery, color-coded by severity, with uptime. |
+| ![CI Runners](docs/screenshots/ci.png) | **CI Runners** — self-hosted GitHub Actions runners running locally in Docker: online/busy/queued counts and the branches currently under test. |
+| ![Model Usage](docs/screenshots/usage.png) | **Model Usage** — Fable weekly-limit gauge plus token volume by model, scanned from your local Claude Code logs. |
 
-![Claude Code stats screen](docs/screenshots/stats.png)
+*(The Pull Requests and CI Runners shots above use sample data via `--demo`.)*
 
-- **Session** (5-hour) and **Weekly** (7-day) usage windows
-- Gradient progress bars with pace markers showing expected vs actual usage
-- Pace indicator: whether your current rate lasts to reset, or an ETA when it runs out
-- Reset countdown and remaining percentage
-- Local timestamp
+## Fable 5 usage
 
-### Disk Usage
+The Claude usage API doesn't expose a dedicated Fable rate-limit window in its legacy fields, but it now reports **per-model weekly limits** in a `limits` array. This tool reads that array and surfaces your **Fable weekly-limit percentage** — the same "how close am I to my weekly cap" number for the Fable model — on both the Claude Code screen and the Model Usage screen.
 
-![Disk usage screen](docs/screenshots/disk.png)
+Because the API only gives a *percentage against the limit*, actual **token volume** per model (including Fable) is computed separately by scanning your local Claude Code session logs (`~/.claude/projects/**/*.jsonl`) over the last 7 days. So you get both: the weekly-limit gauge (from the API) and the raw token counts (from your logs).
 
-- Anti-aliased donut chart with gradient coloring
-- Free space percentage in the center
-- Used/free breakdown in GB
+## How usage is fetched (API, not the CLI)
+
+Earlier versions shelled out to the `claude-code-stats` crate. This version talks to the Anthropic **OAuth usage API directly** (`https://api.anthropic.com/api/oauth/usage`):
+
+- It reads your existing **Claude Code OAuth token from the macOS keychain** (falling back to `~/.claude/.credentials.json`). No API key is stored, entered, or committed anywhere — it reuses the credential Claude Code already manages.
+- Responses are **cached** to `~/.cache/geekmagic-stats/usage.json` for 60s. If a fetch fails (e.g. a transient `429`), the last cached response is reused so the screen never blanks.
+- If no credential is found or the API errors with no cache, the screen shows a clear "Not connected" card instead of failing.
 
 ## Requirements
 
-- **GeekMagic SmallTV Ultra** (240x240, tested on firmware Ultra-V9.0.43)
-- **[claude-code-stats](https://crates.io/crates/claude-code-stats)** crate (used as an in-process Rust library)
-- Rust toolchain
+- **GeekMagic SmallTV Ultra** (240×240, tested on firmware Ultra-V9.0.43) on the same LAN
+- **macOS** — uses the keychain, `scutil`, `sysctl`, `pmset`, and `memory_pressure`
+- **Rust toolchain**
+- Signed into **Claude Code** (the usage screen reads its keychain token)
+- Optional: **[`gh`](https://cli.github.com) CLI** for the PR and CI screens; **Docker** for the CI Runners screen
 
 ## Install
 
@@ -38,58 +46,73 @@ The device auto-cycles between screens every 10 seconds in album mode.
 cargo install --path .
 ```
 
-This installs two binaries to `~/.cargo/bin/`:
-- `geekmagic-stats` — stats screen (+ optional disk)
-- `geekmagic-disk` — disk screen standalone
+Installs these binaries to `~/.cargo/bin/`:
+
+| Binary | Screen |
+|---|---|
+| `geekmagic-all` | Renders all enabled screens and pushes them as a rotating album |
+| `geekmagic-stats` | Claude Code usage (Session / Weekly / Fable weekly) |
+| `geekmagic-git` | Pull Requests |
+| `geekmagic-sys` | System vitals |
+| `geekmagic-ci` | CI runners |
+| `geekmagic-usage` | Per-model token usage |
 
 ## Usage
 
-### One-shot push
+### Rotating album (recommended)
 
 ```sh
-# Push stats screen only (uses host from config)
-geekmagic-stats
+# Render every enabled screen and push as an auto-cycling album
+geekmagic-all --host 192.168.1.50
 
-# Push stats + disk as auto-cycling album
-geekmagic-stats --with-disk
+# Pick a subset, in order
+geekmagic-all --host 192.168.1.50 --screens stats,ci
 
-# Custom device IP
-geekmagic-stats --host 192.168.1.50 --with-disk
+# Refresh the data every 60s (device cycles screens on its own)
+geekmagic-all --host 192.168.1.50 --daemon 60
 
-# Save to file instead of pushing
-geekmagic-stats --output preview.png
+# Save all screens as PNGs instead of pushing
+geekmagic-all --output-dir ./preview
 ```
+
+### Individual screens
+
+```sh
+geekmagic-stats --host 192.168.1.50
+geekmagic-git   --host 192.168.1.50
+geekmagic-sys   --host 192.168.1.50
+geekmagic-ci    --host 192.168.1.50
+geekmagic-usage --host 192.168.1.50
+
+# Preview any screen to a file (no device needed)
+geekmagic-stats --output preview.png
+
+# Preview PR / CI layouts with sample data (no gh/Docker needed)
+geekmagic-git --demo --output pr.png
+geekmagic-ci  --demo --output ci.png
+```
+
+Every binary probes the device first and **skips the push if it's unreachable** — a built-in "am I home?" check — so a running daemon quietly no-ops when you're away.
 
 ### Configuration
 
-By default, config is read from `~/.config/geekmagic-stats/config.toml`.
+Config is read from `~/.config/geekmagic-stats/config.toml`:
 
 ```toml
-host = "10.0.1.102"
-daemon = 300
-with_disk = true
+host = "192.168.1.50"
+
+# Screens to rotate through, in order.
+# Available: stats, git, sys, ci, usage
+screens = ["stats", "git", "sys", "ci"]
+
+# Seconds each screen shows on the device before advancing
+interval = 10
+
+# Optional: refresh interval for daemon mode (seconds)
+daemon = 60
 ```
 
-`host` is required for uploads unless you only use `--output`.
-
-You can override the path with `--config /path/to/config.toml`.
-
-Precedence order:
-- CLI flags
-- config file
-- built-in defaults (`with_disk = false`, no default daemon)
-
-`geekmagic-disk` supports the same config file and `--config` flag.
-
-### Daemon mode
-
-Push updated screens every 5 minutes:
-
-```sh
-geekmagic-stats -d 300 --with-disk
-```
-
-The interval (in seconds) has a minimum of 10s to avoid flooding the device.
+Precedence: CLI flags → config file → built-in defaults. Override the path with `--config /path/to/config.toml`. `host` is required for uploads unless you use `--output`/`--output-dir`.
 
 ### Run on startup (macOS)
 
@@ -104,71 +127,77 @@ Create `~/Library/LaunchAgents/com.geekmagic.stats.plist`:
     <string>com.geekmagic.stats</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/YOU/.cargo/bin/geekmagic-stats</string>
-        <string>--config</string>
-        <string>/Users/YOU/.config/geekmagic-stats/config.toml</string>
+        <string>/Users/YOU/.cargo/bin/geekmagic-all</string>
+        <string>--daemon</string>
+        <string>60</string>
     </array>
+    <key>RunAtLoad</key>
+    <true/>
     <key>KeepAlive</key>
     <true/>
+    <!-- launchd gives a minimal PATH; the CI/vitals screens need gh, docker, etc. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
     <key>StandardOutPath</key>
-    <string>/tmp/geekmagic-stats.log</string>
+    <string>/Users/YOU/Library/Logs/geekmagic.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/geekmagic-stats.log</string>
+    <string>/Users/YOU/Library/Logs/geekmagic.log</string>
 </dict>
 </plist>
 ```
 
-Then load it:
-
 ```sh
-launchctl load ~/Library/LaunchAgents/com.geekmagic.stats.plist
-```
+# Start
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.geekmagic.stats.plist
 
-Manage:
-
-```sh
-# View logs
-tail -f /tmp/geekmagic-stats.log
-
-# Stop (auto-restarts due to KeepAlive)
-launchctl stop com.geekmagic.stats
-
-# Disable completely
-launchctl unload ~/Library/LaunchAgents/com.geekmagic.stats.plist
+# Watch logs
+tail -f ~/Library/Logs/geekmagic.log
 
 # Restart after rebuilding
 cargo install --path . && launchctl kickstart -k gui/$(id -u)/com.geekmagic.stats
+
+# Stop (KeepAlive means a plain kill just respawns it)
+launchctl bootout gui/$(id -u)/com.geekmagic.stats
 ```
+
+The agent runs while you're logged in and, thanks to the reachability check, only pushes when the device is on your network.
 
 ## How it works
 
-1. Uses the `claude-code-stats` crate to collect current API usage as JSON
-2. Computes pace locally (rate of usage vs time remaining) if not provided by the API
-3. Renders 240x240 dark-themed images using `image` + `imageproc` + `ab_glyph` with the Inter font
-4. Encodes to JPEG and uploads via multipart POST to the device's HTTP API
-5. Sets album mode with autoplay so the device cycles between screens
+1. Each screen gathers its data (usage API, `gh`, Docker, `sysctl`/`pmset`, or a log scan).
+2. Screens render to 240×240 dark-themed images via `image` + `imageproc` + `ab_glyph` with the Inter font, from a shared `draw` module.
+3. Images are JPEG-encoded and uploaded via multipart POST to the device's HTTP API.
+4. The rotator clears the device's image folder and re-uploads the set, then enables Photo Album autoplay so the device cycles through them.
 
-The device runs a plain HTTP server with no authentication. Images are uploaded to `/doUpload?dir=/image/` and displayed by setting theme 3 (Photo Album).
+The device runs a plain HTTP server with no authentication. Images are uploaded to `/doUpload?dir=/image/` and shown by setting theme 3 (Photo Album).
 
 ## Project structure
 
 ```
 src/
-  config.rs      Loads config from ~/.config/geekmagic-stats/config.toml
-  main.rs        CLI entry point, daemon loop
-  stats.rs       Calls claude-code-stats crate, parses JSON, computes pace
-  render.rs      Renders the stats screen (progress bars, text)
-  disk.rs        Standalone disk usage binary
-  disk_render.rs Renders the disk donut chart
-  upload.rs      JPEG encoding, device upload, album management
-  lib.rs         Shared library (upload + disk_render)
+  lib.rs         Shared library (geekmagic_common)
+  draw.rs        Shared canvas/colors/fonts/bars/text primitives
+  config.rs      Loads ~/.config/geekmagic-stats/config.toml
+  upload.rs      JPEG encode, device upload, album mode, reachability probe
+  rotate.rs      geekmagic-all: render enabled screens, push as album
+  stats.rs       OAuth usage API client + on-disk cache
+  render.rs      Claude Code screen (Session / Weekly / Fable weekly)
+  pr.rs          Pull Requests screen (via gh)
+  sysinfo.rs     System vitals screen
+  ci.rs          CI runners screen (Docker + GitHub API)
+  usage.rs       Per-model token usage (local log scan)
+  main.rs, git.rs, sys.rs, ci_bin.rs, usage_bin.rs   Thin binaries
 fonts/
-  Inter-Regular.ttf
-  Inter-Bold.ttf
+  Inter-Regular.ttf, Inter-Bold.ttf
 ```
 
 ## Device compatibility
 
-Built for the GeekMagic SmallTV Ultra (240x240 LCD). The device firmware has some HTTP quirks (duplicate `Content-Length` headers, data after `Connection: close`) which are handled gracefully.
+Built for the GeekMagic SmallTV Ultra (240×240 LCD). The firmware has some HTTP quirks (duplicate `Content-Length` headers, data after `Connection: close`) which are handled gracefully. Other GeekMagic models that support the same HTTP API and Photo Album theme should work — the SmallTV Pro uses theme 4 instead of 3 and has a 128×128 display.
 
-Should work with other GeekMagic models that support the same HTTP API and Photo Album theme — the SmallTV Pro uses theme 4 instead of 3 and has a 128x128 display.
+## Credits
+
+Forked from [jimmystridh/geekmagic-stats](https://github.com/jimmystridh/geekmagic-stats).

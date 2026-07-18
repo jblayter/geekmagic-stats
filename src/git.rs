@@ -18,6 +18,10 @@ struct Args {
     /// Save rendered image to this path instead of uploading
     #[arg(short, long)]
     output: Option<String>,
+
+    /// Render representative sample data instead of querying GitHub
+    #[arg(long)]
+    demo: bool,
 }
 
 fn main() -> Result<()> {
@@ -38,7 +42,11 @@ fn main() -> Result<()> {
         Some(host)
     };
 
-    let img = pr::render_screen();
+    let img = if args.demo {
+        pr::render_demo()
+    } else {
+        pr::render_screen()
+    };
 
     if let Some(path) = &args.output {
         img.save(path)?;

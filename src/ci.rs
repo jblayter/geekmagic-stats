@@ -416,3 +416,28 @@ pub fn render_screen() -> RgbaImage {
         }
     }
 }
+
+/// Render with representative sample data — for docs/screenshots and previewing
+/// the layout without Docker/GitHub.
+pub fn render_demo() -> RgbaImage {
+    let run = |name: &str, branch: &str, elapsed_min: i64, running: bool| ActiveRun {
+        name: name.to_string(),
+        repo: "webapp".to_string(),
+        branch: branch.to_string(),
+        elapsed_min,
+        running,
+    };
+    let data = CiData {
+        containers_up: 2,
+        repos: vec!["webapp".to_string()],
+        runners_online: 2,
+        runners_busy: 2,
+        queued: 1,
+        active: vec![
+            run("CI", "main", 8, true),
+            run("E2E Tests", "feat/checkout", 6, true),
+            run("CI", "feat/search", 5, false),
+        ],
+    };
+    render(&data)
+}

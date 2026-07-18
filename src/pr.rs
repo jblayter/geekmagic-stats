@@ -252,3 +252,29 @@ pub fn render_screen() -> RgbaImage {
         }
     }
 }
+
+/// Render with representative sample data — for docs/screenshots and previewing
+/// the layout without a GitHub connection.
+pub fn render_demo() -> RgbaImage {
+    let mk = |repo: &str, number: u64, title: &str| Pr {
+        number,
+        title: title.to_string(),
+        repository: Repo {
+            name_with_owner: repo.to_string(),
+        },
+        url: String::new(),
+        is_draft: false,
+        updated_at: String::new(),
+    };
+    let data = Dashboard {
+        authored: vec![
+            mk("acme/webapp", 128, "Add OAuth login flow"),
+            mk("acme/api", 77, "Fix rate limiter edge case"),
+            mk("acme/cli", 9, "Bump dependencies"),
+        ],
+        authored_total: 4,
+        review_count: 2,
+        ci: vec![CiStatus::Pass, CiStatus::Fail, CiStatus::None],
+    };
+    render(&data)
+}
