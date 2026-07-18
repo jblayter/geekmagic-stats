@@ -9,7 +9,11 @@ use serde::Deserialize;
 pub struct AppConfig {
     pub host: Option<String>,
     pub daemon: Option<u64>,
-    pub with_disk: Option<bool>,
+    /// Screens to include in the rotation, in order. Valid names:
+    /// "stats", "git", "sys", "ci", "usage". Defaults to all.
+    pub screens: Option<Vec<String>>,
+    /// On-device autoplay interval in seconds between screens.
+    pub interval: Option<u64>,
 }
 
 fn expand_home(path: &str) -> PathBuf {

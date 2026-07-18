@@ -1,13 +1,10 @@
-mod render;
-mod stats;
-
 use std::thread;
 use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use geekmagic_common::config;
-use geekmagic_common::disk_render;
+use geekmagic_common::render;
 
 #[derive(Parser)]
 #[command(about = "Render Claude Code usage stats to a GeekMagic display")]
@@ -27,10 +24,6 @@ struct Args {
     /// Run as daemon, pushing every N seconds
     #[arg(short, long)]
     daemon: Option<u64>,
-
-    /// Also render and upload disk usage screen
-    #[arg(long)]
-    with_disk: bool,
 }
 
 #[derive(Clone)]
@@ -38,7 +31,6 @@ struct RuntimeArgs {
     host: String,
     output: Option<String>,
     daemon: Option<u64>,
-    with_disk: bool,
 }
 
 fn resolve_args(args: Args) -> Result<RuntimeArgs> {
@@ -52,17 +44,20 @@ fn resolve_args(args: Args) -> Result<RuntimeArgs> {
         host,
         output: args.output,
         daemon: args.daemon.or(cfg.daemon),
-        with_disk: if args.with_disk {
-            true
-        } else {
-            cfg.with_disk.unwrap_or(false)
-        },
     })
 }
 
 fn run_once(args: &RuntimeArgs) -> Result<()> {
-    let payload = stats::fetch_stats()?;
-    let stats_img = render::render_bars(&payload)?;
+    // Skip early when pushing to an unreachable device (i.e. not home).
+    if args.output.is_none() && !geekmagic_common::upload::is_reachable(&args.host) {
+        let now = chrono::Local::now().format("%H:%M:%S");
+        println!("[{now}] Device {} unreachable — skipping (not home?)", args.host);
+        return Ok(());
+    }
+
+    // render_screen returns an error card image if the CLI fails, so the device
+    // shows "offline" rather than the daemon silently skipping.
+    let stats_img = render::render_screen();
 
     if let Some(path) = &args.output {
         stats_img.save(path)?;
@@ -70,21 +65,9 @@ fn run_once(args: &RuntimeArgs) -> Result<()> {
         return Ok(());
     }
 
-    if args.with_disk {
-        let disk_info = disk_render::get_disk_info()?;
-        let disk_img = disk_render::render_disk(&disk_info)?;
-
-        geekmagic_common::upload::upload_album(
-            &args.host,
-            &[("stats.jpg", &stats_img), ("disk.jpg", &disk_img)],
-        )?;
-        let now = chrono::Local::now().format("%H:%M:%S");
-        println!("[{now}] Pushed stats + disk to {}", args.host);
-    } else {
-        geekmagic_common::upload::upload_and_display(&args.host, &stats_img)?;
-        let now = chrono::Local::now().format("%H:%M:%S");
-        println!("[{now}] Pushed to {}", args.host);
-    }
+    geekmagic_common::upload::upload_and_display(&args.host, &stats_img)?;
+    let now = chrono::Local::now().format("%H:%M:%S");
+    println!("[{now}] Pushed to {}", args.host);
 
     Ok(())
 }

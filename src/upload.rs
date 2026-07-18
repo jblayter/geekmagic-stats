@@ -1,8 +1,28 @@
 use std::io::Cursor;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use image::RgbaImage;
 use reqwest::blocking::multipart;
+
+/// Quick check that the device is on the network and accepting connections.
+/// Because the display only lives on the home LAN, a successful probe doubles
+/// as an "am I home?" check. `host` may be "ip" or "ip:port" (defaults to :80).
+pub fn is_reachable(host: &str) -> bool {
+    let addr = if host.contains(':') {
+        host.to_string()
+    } else {
+        format!("{host}:80")
+    };
+    match addr.to_socket_addrs() {
+        Ok(mut addrs) => addrs
+            .next()
+            .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(800)).is_ok())
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
 
 fn encode_jpeg(img: &RgbaImage) -> Result<Vec<u8>> {
     let rgb = image::DynamicImage::ImageRgba8(img.clone()).into_rgb8();
@@ -49,25 +69,42 @@ fn make_client() -> Result<reqwest::blocking::Client> {
         .build()?)
 }
 
-pub fn upload_and_display(host: &str, img: &RgbaImage) -> Result<()> {
+/// Upload a single image under `filename` and display it. `filename` should end
+/// in `.jpg` (e.g. "stats.jpg", "pr-dashboard.jpg") so multiple screens can live
+/// on the device without clobbering each other.
+pub fn upload_named(host: &str, filename: &str, img: &RgbaImage) -> Result<()> {
     let base = format!("http://{host}");
     let client = make_client()?;
 
-    upload_file(&client, &base, "stats.jpg", encode_jpeg(img)?)?;
+    upload_file(&client, &base, filename, encode_jpeg(img)?)?;
 
     client
         .get(format!("{base}/set?theme=3"))
         .send()
         .context("failed to set theme")?;
     client
-        .get(format!("{base}/set?img=/image//stats.jpg"))
+        .get(format!("{base}/set?img=/image//{filename}"))
         .send()
         .context("failed to set image")?;
 
     Ok(())
 }
 
+pub fn upload_and_display(host: &str, img: &RgbaImage) -> Result<()> {
+    upload_named(host, "stats.jpg", img)
+}
+
 pub fn upload_album(host: &str, images: &[(&str, &RgbaImage)]) -> Result<()> {
+    upload_album_every(host, images, 10)
+}
+
+/// Like [`upload_album`], but with a configurable on-device autoplay interval
+/// (seconds) between screens.
+pub fn upload_album_every(
+    host: &str,
+    images: &[(&str, &RgbaImage)],
+    interval_secs: u64,
+) -> Result<()> {
     let base = format!("http://{host}");
     let client = make_client()?;
 
@@ -96,9 +133,10 @@ pub fn upload_album(host: &str, images: &[(&str, &RgbaImage)]) -> Result<()> {
             .context("failed to set image")?;
     }
 
-    // Enable autoplay with 10s interval
+    // Enable autoplay with the requested interval
+    let interval = interval_secs.max(1);
     client
-        .get(format!("{base}/set?i_i=10&autoplay=1"))
+        .get(format!("{base}/set?i_i={interval}&autoplay=1"))
         .send()
         .context("failed to enable autoplay")?;
 

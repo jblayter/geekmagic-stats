@@ -1,3 +1,9 @@
+pub mod ci;
 pub mod config;
-pub mod disk_render;
+pub mod draw;
+pub mod pr;
+pub mod render;
+pub mod stats;
+pub mod sysinfo;
 pub mod upload;
+pub mod usage;

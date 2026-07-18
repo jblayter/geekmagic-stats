@@ -1,1 +1,4 @@
 /target
+
+# Local preview renders (contain personal usage/repo/CI data)
+/preview*.png
