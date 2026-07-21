@@ -15,13 +15,23 @@ pub fn is_reachable(host: &str) -> bool {
     } else {
         format!("{host}:80")
     };
-    match addr.to_socket_addrs() {
-        Ok(mut addrs) => addrs
-            .next()
-            .map(|sa| TcpStream::connect_timeout(&sa, Duration::from_millis(800)).is_ok())
-            .unwrap_or(false),
-        Err(_) => false,
+    // A device with Wi-Fi power-saving (and especially one just coming out of a
+    // display-off/night-mode window) can take several seconds to wake its radio
+    // and answer. Retry a handful of times: the repeated SYNs act as wake-up
+    // traffic, and a later attempt succeeds once the radio is up. Worst case
+    // (genuinely away) this blocks ~10s, which is fine against a 60s cycle.
+    let Ok(mut addrs) = addr.to_socket_addrs() else {
+        return false;
+    };
+    let Some(sa) = addrs.next() else {
+        return false;
+    };
+    for _ in 0..5 {
+        if TcpStream::connect_timeout(&sa, Duration::from_millis(2000)).is_ok() {
+            return true;
+        }
     }
+    false
 }
 
 fn encode_jpeg(img: &RgbaImage) -> Result<Vec<u8>> {
