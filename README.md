@@ -24,20 +24,21 @@ The Claude usage API doesn't expose a dedicated Fable rate-limit window in its l
 
 Because the API only gives a *percentage against the limit*, actual **token volume** per model (including Fable) is computed separately by scanning your local Claude Code session logs (`~/.claude/projects/**/*.jsonl`) over the last 7 days. So you get both: the weekly-limit gauge (from the API) and the raw token counts (from your logs).
 
-## How usage is fetched (API, not the CLI)
+## How usage is fetched
 
 Earlier versions shelled out to the `claude-code-stats` crate. This version talks to the Anthropic **OAuth usage API directly** (`https://api.anthropic.com/api/oauth/usage`):
 
 - It reads your existing **Claude Code OAuth token from the macOS keychain** (falling back to `~/.claude/.credentials.json`). No API key is stored, entered, or committed anywhere — it reuses the credential Claude Code already manages.
-- Responses are **cached** to `~/.cache/geekmagic-stats/usage.json` for 60s. If a fetch fails (e.g. a transient `429`), the last cached response is reused so the screen never blanks.
-- If no credential is found or the API errors with no cache, the screen shows a clear "Not connected" card instead of failing.
+- **Token refresh:** if the stored token has expired, it invokes the `claude` CLI once (which refreshes and rewrites the keychain item), then re-reads it. The CLI is located even under the daemon's minimal `PATH` by searching `PATH`, `~/.nvm/versions/node/*/bin`, and common install paths. So the daemon stays authenticated on its own; if `claude` can't be found, running it once in a terminal refreshes the token.
+- **Caching:** responses are cached to `~/.cache/geekmagic-stats/usage.json` for 60s. On a fetch error (e.g. a transient `429`) it falls back to cache **only if it's under 30 minutes old**, so brief hiccups don't blank the screen — but stale data is never shown indefinitely.
+- If there's no valid credential, or the API errors with no recent cache, the screen shows a clear **"Not connected"** card instead of silently displaying old numbers.
 
 ## Requirements
 
 - **GeekMagic SmallTV Ultra** (240×240, tested on firmware Ultra-V9.0.43) on the same LAN
 - **macOS** — uses the keychain, `scutil`, `sysctl`, `pmset`, and `memory_pressure`
 - **Rust toolchain**
-- Signed into **Claude Code** (the usage screen reads its keychain token)
+- Signed into **Claude Code** — the usage screen reads its keychain token, and uses the `claude` CLI to refresh it when it expires
 - Optional: **[`gh`](https://cli.github.com) CLI** for the PR and CI screens; **Docker** for the CI Runners screen
 
 ## Install
