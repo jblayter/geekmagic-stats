@@ -1,6 +1,10 @@
 //! `geekmagic-all` — render every enabled screen and push them to the device as
 //! a single rotating album (the display auto-cycles through them).
 
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -9,6 +13,43 @@ use clap::Parser;
 use image::RgbaImage;
 
 use geekmagic_common::{ci, config, pr, render, sysinfo, upload, usage};
+
+/// File logging is enabled only in daemon mode (one-shot runs just print).
+static DAEMON: AtomicBool = AtomicBool::new(false);
+
+/// Rotate the log once it passes this size, keeping a single prior generation.
+const LOG_MAX_BYTES: u64 = 2 * 1024 * 1024;
+
+fn log_path() -> Option<PathBuf> {
+    std::env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join("Library").join("Logs").join("geekmagic.log"))
+}
+
+/// Print to stdout and, in daemon mode, append a timestamped line to the log
+/// file. Opens in append mode per write (no held descriptor, no lock), so
+/// rotation is just a rename and there's no restart or truncation dance.
+fn log_line(msg: &str) {
+    println!("{msg}");
+    if !DAEMON.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(path) = log_path() else {
+        return;
+    };
+    // Size-based rotation: current -> .1 (overwriting the previous .1).
+    if let Ok(meta) = std::fs::metadata(&path) {
+        if meta.len() > LOG_MAX_BYTES {
+            let mut rotated = path.clone().into_os_string();
+            rotated.push(".1");
+            let _ = std::fs::rename(&path, PathBuf::from(rotated));
+        }
+    }
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
+}
 
 #[derive(Parser)]
 #[command(about = "Render all screens and push them as a rotating album")]
@@ -74,8 +115,7 @@ fn run_once(host: &str, screens: &[String], interval: u64, output_dir: &Option<S
     // When pushing to a device, bail early if it isn't reachable — this doubles
     // as an "am I home?" check and skips the (heavy) render work when away.
     if output_dir.is_none() && !upload::is_reachable(host) {
-        let now = chrono::Local::now().format("%H:%M:%S");
-        println!("[{now}] Device {host} unreachable — skipping (not home?)");
+        log_line(&format!("Device {host} unreachable — skipping (not home?)"));
         return Ok(());
     }
 
@@ -102,13 +142,12 @@ fn run_once(host: &str, screens: &[String], interval: u64, output_dir: &Option<S
         rendered.iter().map(|(n, img)| (n.as_str(), img)).collect();
     upload::upload_album_every(host, &album, interval)?;
 
-    let now = chrono::Local::now().format("%H:%M:%S");
     let names: Vec<&str> = screens.iter().map(|s| s.as_str()).collect();
-    println!(
-        "[{now}] Pushed {} screens ({}) to {host}, rotating every {interval}s",
+    log_line(&format!(
+        "Pushed {} screens ({}) to {host}, rotating every {interval}s",
         album.len(),
         names.join(", ")
-    );
+    ));
     Ok(())
 }
 
@@ -131,11 +170,11 @@ fn main() -> Result<()> {
 
     if let Some(refresh) = args.daemon.or(cfg.daemon) {
         let refresh = refresh.max(10);
-        println!("Daemon mode: refreshing every {refresh}s to {host}");
+        DAEMON.store(true, Ordering::Relaxed);
+        log_line(&format!("Daemon mode: refreshing every {refresh}s to {host}"));
         loop {
             if let Err(e) = run_once(&host, &screens, interval, &output_dir) {
-                let now = chrono::Local::now().format("%H:%M:%S");
-                eprintln!("[{now}] Error: {e}");
+                log_line(&format!("Error: {e}"));
             }
             thread::sleep(Duration::from_secs(refresh));
         }

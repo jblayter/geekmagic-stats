@@ -141,13 +141,17 @@ Create `~/Library/LaunchAgents/com.geekmagic.stats.plist`:
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
     </dict>
+    <!-- The daemon writes its own log (~/Library/Logs/geekmagic.log) in append
+         mode and auto-rotates it at 2 MB, so keep launchd out of that file. -->
     <key>StandardOutPath</key>
-    <string>/Users/YOU/Library/Logs/geekmagic.log</string>
+    <string>/dev/null</string>
     <key>StandardErrorPath</key>
-    <string>/Users/YOU/Library/Logs/geekmagic.log</string>
+    <string>/Users/YOU/Library/Logs/geekmagic.err.log</string>
 </dict>
 </plist>
 ```
+
+In daemon mode the log is written directly by `geekmagic-all` (append-only, no held file handle) and rotates automatically once it passes 2 MB — the previous generation is kept as `geekmagic.log.1`.
 
 ```sh
 # Start
