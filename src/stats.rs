@@ -24,6 +24,9 @@ const KEYCHAIN_SERVICES: &[&str] = &[
 pub struct StatsError {
     pub title: String,
     pub message: String,
+    /// True when the failure is authentication (expired/missing token, 401) and
+    /// the fix is re-logging into Claude Code — renders a step-by-step card.
+    pub needs_auth: bool,
 }
 
 impl StatsError {
@@ -31,6 +34,15 @@ impl StatsError {
         StatsError {
             title: title.to_string(),
             message: message.into(),
+            needs_auth: false,
+        }
+    }
+
+    fn auth() -> Self {
+        StatsError {
+            title: "Sign in to Claude".to_string(),
+            message: "Your Claude login expired".to_string(),
+            needs_auth: true,
         }
     }
 }
@@ -245,7 +257,7 @@ fn fetch_body(token: &str) -> Result<String, StatsError> {
     let status = resp.status();
     let body = resp.text().unwrap_or_default();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(StatsError::new("Not connected", "Auth expired — reopen Claude Code"));
+        return Err(StatsError::auth());
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(StatsError::new("Rate limited", "API 429 — using cached data"));
@@ -432,9 +444,7 @@ pub fn fetch_stats() -> Result<ActiveData, StatsError> {
 
     // 2. Fetch live.
     let live = get_token()
-        .ok_or_else(|| {
-            StatsError::new("Not connected", "No Claude credentials found — sign in to Claude Code")
-        })
+        .ok_or_else(StatsError::auth)
         .and_then(|token| fetch_body(&token));
 
     match live {

@@ -482,6 +482,67 @@ fn wrap_text(text: &str, scale: f32, max_w: i32) -> Vec<String> {
 }
 
 /// Fetch Claude stats and render the bars, or an error card on failure.
+/// Card shown when the failure is authentication — gives step-by-step re-login
+/// instructions rather than a generic error.
+fn render_auth_card() -> RgbaImage {
+    let font = FontRef::try_from_slice(FONT_BYTES).expect("bundled font");
+    let font_bold = FontRef::try_from_slice(FONT_BOLD_BYTES).expect("bundled bold font");
+    let mut img = RgbaImage::from_pixel(W, H, BG);
+
+    let mx = 16i32;
+    let right_edge = W as i32 - mx;
+    let content_w = (right_edge - mx) as u32;
+    let cx = W as i32 / 2;
+    let amber = WARN_FILL_LEFT;
+
+    // Header
+    draw_text_mut(&mut img, TEXT_PRIMARY, mx, 10, PxScale::from(17.0), &font_bold, "Claude Code");
+    draw_text_right(&mut img, amber, right_edge, 11, 15.0, &font, "sign in");
+    draw_rounded_rect(&mut img, mx, 33, content_w, 1, 0, SEPARATOR);
+
+    // Padlock icon: top-half ring shackle + rounded-rect body + keyhole.
+    let sy = 62i32;
+    for dy in -12..=0 {
+        for dx in -12..=12 {
+            let d2 = dx * dx + dy * dy;
+            if (49..=144).contains(&d2) {
+                let (px, py) = (cx + dx, sy + dy);
+                if px >= 0 && px < W as i32 && py >= 0 && py < H as i32 {
+                    img.put_pixel(px as u32, py as u32, amber);
+                }
+            }
+        }
+    }
+    draw_rounded_rect(&mut img, cx - 16, 60, 32, 26, 6, amber);
+    draw_circle(&mut img, cx, 71, 3, BG);
+    for py in 71..79 {
+        if py < H as i32 {
+            img.put_pixel(cx as u32, py as u32, BG);
+        }
+    }
+
+    // Title + steps.
+    let center = |img: &mut RgbaImage, y: i32, scale: f32, bold: bool, color, text: &str| {
+        let w = approx_text_width(text, scale);
+        let f = if bold { &font_bold } else { &font };
+        draw_text_mut(img, color, cx - w / 2, y, PxScale::from(scale), f, text);
+    };
+
+    center(&mut img, 100, 18.0, true, TEXT_PRIMARY, "Login expired");
+    center(&mut img, 126, 12.5, false, TEXT_MUTED, "In a terminal, run:");
+
+    // Command chip.
+    let cmd = "claude";
+    let cw = approx_text_width(cmd, 17.0) + 28;
+    let chip_x = cx - cw / 2;
+    draw_rounded_rect(&mut img, chip_x, 146, cw as u32, 28, 7, BAR_TRACK);
+    center(&mut img, 151, 17.0, true, TEXT_PRIMARY, cmd);
+
+    center(&mut img, 188, 12.0, false, TEXT_DIM, "then  /login  if prompted");
+
+    img
+}
+
 pub fn render_screen() -> RgbaImage {
     match crate::stats::fetch_stats() {
         Ok(data) => {
@@ -490,12 +551,17 @@ pub fn render_screen() -> RgbaImage {
                 render_error(&crate::stats::StatsError {
                     title: "Render error".to_string(),
                     message: "Could not render stats".to_string(),
+                    needs_auth: false,
                 })
             })
         }
         Err(e) => {
             eprintln!("Stats unavailable: {} — {}", e.title, e.message);
-            render_error(&e)
+            if e.needs_auth {
+                render_auth_card()
+            } else {
+                render_error(&e)
+            }
         }
     }
 }
