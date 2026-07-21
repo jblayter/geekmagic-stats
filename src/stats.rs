@@ -122,7 +122,23 @@ struct OAuthData {
 
 // ── Token retrieval (keychain, then credentials file) ───────────────────────
 
-fn keychain_token(service: &str, user: &str) -> Option<String> {
+fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+/// A token is usable if it has no expiry, or expires more than 30s from now.
+fn token_valid(expires_at: Option<i64>) -> bool {
+    match expires_at {
+        Some(exp) => exp > now_ms() + 30_000,
+        None => true,
+    }
+}
+
+/// (access_token, expiresAt) from a keychain item.
+fn keychain_creds(service: &str, user: &str) -> Option<(String, Option<i64>)> {
     let out = Command::new("security")
         .args(["find-generic-password", "-a", user, "-s", service, "-w"])
         .output()
@@ -131,37 +147,78 @@ fn keychain_token(service: &str, user: &str) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let payload: KeychainPayload = serde_json::from_str(&s).ok()?;
-    payload.claude_ai_oauth.and_then(|o| o.access_token)
+    let oauth = serde_json::from_str::<KeychainPayload>(&s).ok()?.claude_ai_oauth?;
+    Some((oauth.access_token?, oauth.expires_at))
 }
 
-fn credentials_file_token() -> Option<String> {
+fn credentials_file_creds() -> Option<(String, Option<i64>)> {
     let home = env::var("HOME").ok()?;
     let path = std::path::PathBuf::from(home).join(".claude").join(".credentials.json");
     let contents = fs::read_to_string(path).ok()?;
-    let payload: KeychainPayload = serde_json::from_str(&contents).ok()?;
-    let oauth = payload.claude_ai_oauth?;
-    // Skip if expired (expiresAt is epoch millis).
-    if let Some(exp) = oauth.expires_at {
-        let now_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as i64;
-        if exp <= now_ms {
-            return None;
+    let oauth = serde_json::from_str::<KeychainPayload>(&contents).ok()?.claude_ai_oauth?;
+    Some((oauth.access_token?, oauth.expires_at))
+}
+
+fn creds_from_stores() -> Option<(String, Option<i64>)> {
+    let user = env::var("USER").unwrap_or_default();
+    for svc in KEYCHAIN_SERVICES {
+        if let Some(c) = keychain_creds(svc, &user) {
+            return Some(c);
         }
     }
-    oauth.access_token
+    credentials_file_creds()
+}
+
+/// Locate the `claude` CLI. It lives in a version-specific nvm dir that isn't on
+/// the daemon's launchd PATH, so search explicitly.
+fn claude_bin() -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+    if let Ok(path) = env::var("PATH") {
+        for dir in path.split(':') {
+            let p = Path::new(dir).join("claude");
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    let home = env::var("HOME").ok()?;
+    if let Ok(entries) = fs::read_dir(Path::new(&home).join(".nvm/versions/node")) {
+        for e in entries.flatten() {
+            let c = e.path().join("bin/claude");
+            if c.exists() {
+                return Some(c);
+            }
+        }
+    }
+    for cand in [
+        format!("{home}/.claude/local/claude"),
+        "/opt/homebrew/bin/claude".to_string(),
+        "/usr/local/bin/claude".to_string(),
+    ] {
+        if Path::new(&cand).exists() {
+            return Some(PathBuf::from(cand));
+        }
+    }
+    None
+}
+
+/// Ask Claude Code to refresh its OAuth token (it does so on any invocation),
+/// which rewrites the keychain item. No-op if the CLI can't be found.
+fn refresh_token() {
+    if let Some(bin) = claude_bin() {
+        let _ = Command::new(bin).arg("--version").output();
+    }
 }
 
 fn get_token() -> Option<String> {
-    let user = env::var("USER").unwrap_or_default();
-    for svc in KEYCHAIN_SERVICES {
-        if let Some(t) = keychain_token(svc, &user) {
-            return Some(t);
+    if let Some((tok, exp)) = creds_from_stores() {
+        if token_valid(exp) {
+            return Some(tok);
         }
     }
-    credentials_file_token()
+    // Expired or missing — trigger a refresh via the Claude Code CLI, then re-read.
+    refresh_token();
+    creds_from_stores().and_then(|(tok, exp)| token_valid(exp).then_some(tok))
 }
 
 // ── Fetch + transform ───────────────────────────────────────────────────────
@@ -208,6 +265,9 @@ fn fetch_body(token: &str) -> Result<String, StatsError> {
 // current time, so a cached body still counts down correctly.
 
 const CACHE_TTL_SECS: u64 = 60;
+/// Never fall back to cache older than this on a fetch error — beyond it, show
+/// the error card rather than silently displaying stale usage.
+const CACHE_STALE_MAX_SECS: u64 = 30 * 60;
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -383,9 +443,12 @@ pub fn fetch_stats() -> Result<ActiveData, StatsError> {
             write_cache(&body);
             Ok(data)
         }
-        // 3. On any failure (429, network, expired token), fall back to the last
-        //    cached body regardless of age rather than blanking the screen.
+        // 3. On a failure (429, network, expired token), fall back to recent
+        //    cache to ride out transient errors — but only if it's fresh enough.
+        //    Beyond CACHE_STALE_MAX_SECS, surface the error so the screen shows
+        //    "Not connected" instead of silently displaying days-old usage.
         Err(e) => read_cache()
+            .filter(|(_, age)| *age < CACHE_STALE_MAX_SECS)
             .and_then(|(body, _)| build_active(&body, now).ok())
             .ok_or(e),
     }
