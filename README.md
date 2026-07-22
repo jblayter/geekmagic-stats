@@ -33,6 +33,18 @@ Earlier versions shelled out to the `claude-code-stats` crate. This version talk
 - **Caching:** responses are cached to `~/.cache/geekmagic-stats/usage.json` for 60s. On a fetch error (e.g. a transient `429`) it falls back to cache **only if it's under 30 minutes old**, so brief hiccups don't blank the screen — but stale data is never shown indefinitely.
 - **Failure cards:** a transient network/API error with no recent cache shows a neutral **"Not connected"** card and self-heals on the next successful fetch. If the problem is authentication (expired/missing token or a `401` that the CLI refresh couldn't recover), the screen instead shows a **re-login card** — "Login expired" with the exact steps to fix it (run `claude`, then `/login` if prompted) — so you're never left guessing why the numbers are stale.
 
+## How CI runners are discovered
+
+The CI Runners screen is fully **auto-discovered** — no repos or runner names are configured or hardcoded. Discovery happens fresh on every refresh:
+
+1. **Find runner containers via Docker.** It runs `docker ps` and keeps any container whose **image name** contains `github-runner` or `actions-runner` (e.g. the popular `myoung34/github-runner` image). That image match is the only pattern used — it's on the image, not on a repo or container name.
+2. **Learn each runner's repo from its own config.** For each matching container it runs `docker inspect` and reads the container's **`REPO_URL` environment variable** — the same one you pass when starting a self-hosted runner (`https://github.com/<owner>/<repo>`). That's how the repo is determined; it's read at runtime, never baked in.
+3. **Query GitHub for live status.** For each distinct repo found, it calls the GitHub API via the `gh` CLI — `repos/{owner}/{repo}/actions/runners` (online/busy), `.../actions/runs?status=queued` (queue depth), and `.../actions/runs?status=in_progress` (active jobs and their branches).
+
+So the screen simply mirrors whatever runner containers are running locally: point a runner at a different repo and the screen follows; run runners for several repos and it aggregates them (the header shows "N repos"). If Docker isn't installed or running, the screen says so; if no runner containers are found, it shows "No runner containers".
+
+> Requires the local runners to be **Docker containers** started with a `REPO_URL` env var (the `myoung34/github-runner` convention). Runners installed a different way — e.g. GitHub's own `actions/runner` binary running directly on the host — aren't detected by the Docker scan.
+
 ## Requirements
 
 - **GeekMagic SmallTV Ultra** (240×240, tested on firmware Ultra-V9.0.43) on the same LAN
