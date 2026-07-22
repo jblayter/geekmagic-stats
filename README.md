@@ -31,7 +31,7 @@ Earlier versions shelled out to the `claude-code-stats` crate. This version talk
 - It reads your existing **Claude Code OAuth token from the macOS keychain** (falling back to `~/.claude/.credentials.json`). No API key is stored, entered, or committed anywhere — it reuses the credential Claude Code already manages.
 - **Token refresh:** if the stored token has expired, it invokes the `claude` CLI once (which refreshes and rewrites the keychain item), then re-reads it. The CLI is located even under the daemon's minimal `PATH` by searching `PATH`, `~/.nvm/versions/node/*/bin`, and common install paths. So the daemon stays authenticated on its own; if `claude` can't be found, running it once in a terminal refreshes the token.
 - **Caching:** responses are cached to `~/.cache/geekmagic-stats/usage.json` for 60s. On a fetch error (e.g. a transient `429`) it falls back to cache **only if it's under 30 minutes old**, so brief hiccups don't blank the screen — but stale data is never shown indefinitely.
-- If there's no valid credential, or the API errors with no recent cache, the screen shows a clear **"Not connected"** card instead of silently displaying old numbers.
+- **Failure cards:** a transient network/API error with no recent cache shows a neutral **"Not connected"** card and self-heals on the next successful fetch. If the problem is authentication (expired/missing token or a `401` that the CLI refresh couldn't recover), the screen instead shows a **re-login card** — "Login expired" with the exact steps to fix it (run `claude`, then `/login` if prompted) — so you're never left guessing why the numbers are stale.
 
 ## Requirements
 
