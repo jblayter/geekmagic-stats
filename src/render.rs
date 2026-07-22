@@ -500,45 +500,23 @@ fn render_auth_card() -> RgbaImage {
     draw_text_right(&mut img, amber, right_edge, 11, 15.0, &font, "sign in");
     draw_rounded_rect(&mut img, mx, 33, content_w, 1, 0, SEPARATOR);
 
-    // Padlock icon: top-half ring shackle + rounded-rect body + keyhole.
-    let sy = 62i32;
-    for dy in -12..=0 {
-        for dx in -12..=12 {
-            let d2 = dx * dx + dy * dy;
-            if (49..=144).contains(&d2) {
-                let (px, py) = (cx + dx, sy + dy);
-                if px >= 0 && px < W as i32 && py >= 0 && py < H as i32 {
-                    img.put_pixel(px as u32, py as u32, amber);
-                }
-            }
-        }
-    }
-    draw_rounded_rect(&mut img, cx - 16, 60, 32, 26, 6, amber);
-    draw_circle(&mut img, cx, 71, 3, BG);
-    for py in 71..79 {
-        if py < H as i32 {
-            img.put_pixel(cx as u32, py as u32, BG);
-        }
-    }
-
-    // Title + steps.
+    // Title + steps (centered, no icon).
     let center = |img: &mut RgbaImage, y: i32, scale: f32, bold: bool, color, text: &str| {
         let w = approx_text_width(text, scale);
         let f = if bold { &font_bold } else { &font };
         draw_text_mut(img, color, cx - w / 2, y, PxScale::from(scale), f, text);
     };
 
-    center(&mut img, 100, 18.0, true, TEXT_PRIMARY, "Login expired");
-    center(&mut img, 126, 12.5, false, TEXT_MUTED, "In a terminal, run:");
+    center(&mut img, 74, 20.0, true, TEXT_PRIMARY, "Login expired");
+    center(&mut img, 108, 12.5, false, TEXT_MUTED, "In a terminal, run:");
 
-    // Command chip.
-    let cmd = "claude";
-    let cw = approx_text_width(cmd, 17.0) + 28;
-    let chip_x = cx - cw / 2;
-    draw_rounded_rect(&mut img, chip_x, 146, cw as u32, 28, 7, BAR_TRACK);
-    center(&mut img, 151, 17.0, true, TEXT_PRIMARY, cmd);
+    // Full-width command chip.
+    let chip_y = 132;
+    let chip_h = 34u32;
+    draw_rounded_rect(&mut img, mx, chip_y, content_w, chip_h, 8, BAR_TRACK);
+    center(&mut img, chip_y + 8, 18.0, true, TEXT_PRIMARY, "claude");
 
-    center(&mut img, 188, 12.0, false, TEXT_DIM, "then  /login  if prompted");
+    center(&mut img, 182, 12.0, false, TEXT_DIM, "then  /login  if prompted");
 
     img
 }
