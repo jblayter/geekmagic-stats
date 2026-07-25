@@ -319,12 +319,18 @@ pub fn render_bars(data: &ActiveData, fable_tokens: u64) -> Result<RgbaImage> {
         &font_bold,
         "Claude Code",
     );
-    let updated_text = if let Some(ts) = &data.updated_at {
-        format!("ts: {}", format_updated_time(ts))
+    // In Desktop-fallback mode, flag the source (amber) instead of a timestamp,
+    // since resets/pace/Fable aren't available from that sample.
+    if data.partial {
+        draw_text_right(&mut img, WARN_FILL_LEFT, right_edge, header_y + 2, 14.0, &font, "desktop");
     } else {
-        "—".to_string()
-    };
-    draw_text_right(&mut img, TEXT_DIM, right_edge, header_y + 1, 15.0, &font, &updated_text);
+        let updated_text = if let Some(ts) = &data.updated_at {
+            format!("ts: {}", format_updated_time(ts))
+        } else {
+            "—".to_string()
+        };
+        draw_text_right(&mut img, TEXT_DIM, right_edge, header_y + 1, 15.0, &font, &updated_text);
+    }
     draw_rounded_rect(&mut img, mx, 33, content_w, 1, 0, SEPARATOR);
 
     if rows.is_empty() {

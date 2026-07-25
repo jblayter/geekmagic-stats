@@ -54,6 +54,9 @@ pub struct ActiveData {
     /// Per-model weekly windows from the `limits` array (e.g. Fable).
     pub scoped: Vec<ScopedWindow>,
     pub updated_at: Option<String>,
+    /// True when data came from the Claude Desktop fallback (Session/Weekly
+    /// only — no resets, pace, or per-model detail).
+    pub partial: bool,
 }
 
 #[derive(Clone)]
@@ -427,6 +430,68 @@ fn build_active(body: &str, now: DateTime<Utc>) -> Result<ActiveData, StatsError
         seven_day,
         scoped,
         updated_at: Some(now.to_rfc3339()),
+        partial: false,
+    })
+}
+
+// ── Claude Desktop fallback ─────────────────────────────────────────────────
+//
+// The Claude Desktop app records usage samples every ~5 min to
+// plan-usage-history.json (a plain, unencrypted file). When our own token is
+// dead and can't be refreshed, a fresh sample there keeps Session/Weekly
+// accurate without any credentials — but it only carries the two headline
+// percentages (no resets, pace, or per-model/Fable detail).
+
+const DESKTOP_MAX_AGE_MS: i64 = 15 * 60 * 1000;
+
+#[derive(Deserialize)]
+struct DesktopHistory {
+    samples: Vec<DesktopSample>,
+}
+
+#[derive(Deserialize)]
+struct DesktopSample {
+    t: i64,
+    u: DesktopUsage,
+}
+
+#[derive(Deserialize)]
+struct DesktopUsage {
+    fh: Option<f64>,
+    sd: Option<f64>,
+}
+
+fn desktop_fallback() -> Option<ActiveData> {
+    let home = env::var("HOME").ok()?;
+    let path = std::path::PathBuf::from(home)
+        .join("Library/Application Support/Claude/plan-usage-history.json");
+    let hist: DesktopHistory = serde_json::from_str(&fs::read_to_string(path).ok()?).ok()?;
+
+    let last = hist.samples.last()?;
+    if now_ms() - last.t > DESKTOP_MAX_AGE_MS {
+        return None; // sample too old (Desktop app not running recently)
+    }
+
+    let window = |util: Option<f64>| {
+        util.map(|u| UsageWindow {
+            utilization: u,
+            resets_in_minutes: None,
+            usage_level: usage_level(u),
+            pace: None,
+        })
+    };
+    let five_hour = window(last.u.fh);
+    let seven_day = window(last.u.sd);
+    if five_hour.is_none() && seven_day.is_none() {
+        return None;
+    }
+
+    Some(ActiveData {
+        five_hour,
+        seven_day,
+        scoped: Vec::new(),
+        updated_at: DateTime::from_timestamp_millis(last.t).map(|dt| dt.to_rfc3339()),
+        partial: true,
     })
 }
 
@@ -453,13 +518,14 @@ pub fn fetch_stats() -> Result<ActiveData, StatsError> {
             write_cache(&body);
             Ok(data)
         }
-        // 3. On a failure (429, network, expired token), fall back to recent
-        //    cache to ride out transient errors — but only if it's fresh enough.
-        //    Beyond CACHE_STALE_MAX_SECS, surface the error so the screen shows
-        //    "Not connected" instead of silently displaying days-old usage.
+        // 3. On a failure (429, network, expired token), fall back in order:
+        //    a) recent cache (rides out transient errors, if fresh enough),
+        //    b) a fresh Claude Desktop sample (Session/Weekly only),
+        //    c) surface the error so the screen shows the right card.
         Err(e) => read_cache()
             .filter(|(_, age)| *age < CACHE_STALE_MAX_SECS)
             .and_then(|(body, _)| build_active(&body, now).ok())
+            .or_else(desktop_fallback)
             .ok_or(e),
     }
 }
