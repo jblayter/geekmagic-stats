@@ -14,7 +14,7 @@ One command renders every enabled screen and pushes them to the device as an aut
 | ![Pull Requests](docs/screenshots/pr.png) | **Pull Requests** — open PRs you authored and PRs awaiting your review, each with a live CI status dot (green pass / red fail / gray no-checks). |
 | ![System Vitals](docs/screenshots/vitals.png) | **System Vitals** — CPU load, memory pressure, and battery, color-coded by severity, with uptime. |
 | ![CI Runners](docs/screenshots/ci.png) | **CI Runners** — self-hosted GitHub Actions runners running locally in Docker: online/busy/queued counts and the branches currently under test. |
-| ![Model Usage](docs/screenshots/usage.png) | **Model Usage** — Fable weekly-limit gauge plus token volume by model, scanned from your local Claude Code logs. |
+| ![Model Usage](docs/screenshots/usage.png) | **Model Usage** — this week's total token volume plus the top models ranked by usage (Opus, Sonnet, …), scanned from your local Claude Code logs. |
 
 *(The Pull Requests and CI Runners shots above use sample data via `--demo`.)*
 

@@ -80,7 +80,7 @@ struct Args {
 }
 
 // "usage" is folded into "stats" now, but remains available on request.
-const DEFAULT_SCREENS: &[&str] = &["stats", "git", "sys", "ci"];
+const DEFAULT_SCREENS: &[&str] = &["stats", "git", "sys", "ci", "usage"];
 
 /// Render one screen by name. Returns (device filename, image). `None` means the
 /// screen has no data right now and should be skipped from the rotation.
